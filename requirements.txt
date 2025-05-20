@@ -1,9 +1,0 @@
-# Core LiveKit SDK + STT plugins
-livekit
-livekit-agents[openai,silero]
-
-# Web layer
-streamlit
-fastapi
-uvicorn[standard]
-python-dotenv

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-LiveKit STT agent using the Hugging Face whisper-turbo-kazasr model (non-streaming).
-Buffers audio via Silero VAD + StreamAdapter.
+LiveKit STT agent using the Hugging Face whisper-turbo-kazasr model (non-streaming),
+with Silero VAD, enhanced noise cancellation (BVC), and StreamAdapter.
 """
 
 import asyncio
@@ -11,6 +11,7 @@ import uuid
 import logging
 import os
 
+# dotenv fallback to avoid circular-import bug
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -20,7 +21,13 @@ from transformers import pipeline
 from pydub import AudioSegment
 
 from livekit import rtc
-from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, stt as agents_stt
+from livekit.agents import (
+    AutoSubscribe,
+    JobContext,
+    WorkerOptions,
+    cli,
+    stt as agents_stt,
+)
 from livekit.agents.stt import (
     SpeechEventType,
     SpeechEvent,
@@ -29,8 +36,7 @@ from livekit.agents.stt import (
     StreamAdapter,
 )
 from livekit.agents.utils import merge_frames
-from livekit.plugins import silero
-
+from livekit.plugins import silero, noise_cancellation
 from livekit.rtc.transcription import Transcription, TranscriptionSegment
 
 load_dotenv()
@@ -46,7 +52,7 @@ logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 
 class HFAudioSTT(agents_stt.STT):
     """
-    Non-streaming STT that sends complete utterances to a Hugging Face ASR model.
+    Non‐streaming STT that sends complete utterances to a Hugging Face ASR model.
     """
     def __init__(self, model_name: str, hf_token: str = None):
         super().__init__(capabilities=STTCapabilities(streaming=False, interim_results=False))
@@ -90,7 +96,7 @@ class HFAudioSTT(agents_stt.STT):
 
 
 async def entrypoint(ctx: JobContext):
-    # Connect & subscribe to audio only
+    # Connect to the room, audio-only
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     room = ctx.room
     logger.info(f"✅ Agent joined room: {room.name!r}")
@@ -98,7 +104,7 @@ async def entrypoint(ctx: JobContext):
     # Load Silero VAD
     vad = silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.5)
 
-    # Instantiate HF STT on whisper-turbo-kazasr
+    # Instantiate our Hugging Face STT
     hf_token = os.getenv("HF_TOKEN", None)
     hf_stt = HFAudioSTT(
         model_name="erzhanbakanbayev/whisper-turbo-kazasr",
@@ -112,11 +118,28 @@ async def entrypoint(ctx: JobContext):
     def on_track(track: rtc.Track, _pub, participant: rtc.RemoteParticipant):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             logger.info(f"▶️ Audio from {participant.identity!r}")
-            asyncio.create_task(handle_track(room, participant.identity, track, stt_adapter))
+            # Apply enhanced noise cancellation (BVC) per-stream
+            noise_stream = rtc.AudioStream.from_track(
+                track=track,
+                noise_cancellation=noise_cancellation.BVC()
+            )
+            # Pass track.sid along with the noise-cancelled stream
+            asyncio.create_task(handle_track(
+                room,
+                participant.identity,
+                track.sid,
+                noise_stream,
+                stt_adapter
+            ))
 
 
-async def handle_track(room, identity: str, track: rtc.Track, stt_impl):
-    audio_stream = rtc.AudioStream(track)
+async def handle_track(
+    room,
+    identity: str,
+    track_sid: str,
+    audio_stream: rtc.AudioStream,
+    stt_impl
+):
     stt_stream = stt_impl.stream()
 
     async def pump_audio():
@@ -138,20 +161,22 @@ async def handle_track(room, identity: str, track: rtc.Track, stt_impl):
                 ))
 
             if segments:
-                # Publish transcription
+                # Publish transcription track
                 await room.local_participant.publish_transcription(
                     Transcription(
                         participant_identity=identity,
-                        track_sid=track.sid,
+                        track_sid=track_sid,
                         segments=segments,
                     )
                 )
-                # On final transcript, also send a data message
+                # Also send final text as a chat message
                 if ev.type == SpeechEventType.FINAL_TRANSCRIPT:
                     final_text = segments[-1].text
                     logger.info(f"✅ Final (kk): {final_text!r}")
                     await room.local_participant.publish_data(
-                        final_text, reliable=True, topic="stt"
+                        final_text,
+                        reliable=True,
+                        topic="stt"
                     )
 
     await asyncio.gather(pump_audio(), pump_transcripts())

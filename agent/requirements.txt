@@ -1,0 +1,18 @@
+# Core LiveKit
+livekit
+livekit-agents
+
+# LiveKit STT plugins
+livekit-plugins-openai
+livekit-plugins-silero
+livekit-plugins-noise-cancellation~=0.2
+
+# ASR model & audio processing
+transformers==4.51.3
+torch==2.5.1
+pydub==0.25.1
+ffmpeg-python==0.2.0
+
+# Environment & utility
+python-dotenv==1.1.0
+openai==1.77.0
