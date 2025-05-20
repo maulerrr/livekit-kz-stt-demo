@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>LiveKit Kazakh STT</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style type="text/tailwindcss">
+    @tailwind base;
+    @tailwind components;
+    @tailwind utilities;
+
+    /* —— Atlanti Default Theme —— */
+    @layer base {
+      :root {
+        --background:        0 0% 100%;       
+        --foreground:        0 0% 10%;        
+        --muted:             120 4.8% 95.9%;  
+        --muted-foreground:  0 0% 30%;        
+        --border:            0 0% 90%;        
+        --input:             0 0% 90%;        
+
+        --primary:           152 100% 40%;    
+        --primary-foreground:0 0% 100%;       
+
+        --secondary:         152 20% 90%;     
+        --secondary-foreground:152 100% 20%;  
+
+        --accent:            152 20% 90%;     
+        --accent-foreground: 152 100% 20%;    
+
+        --destructive:       0 84.2% 60.2%;  
+        --destructive-foreground:0 0% 98%;  
+
+        --ring:              152 100% 40%;   
+        --radius:            0.5rem;
+      }
+      body {
+        @apply bg-[hsl(var(--background))] text-[hsl(var(--foreground))];
+      }
+      input, select {
+        @apply bg-[hsl(var(--input))] border border-[hsl(var(--border))] rounded-[var(--radius)] p-2 text-[hsl(var(--foreground))];
+      }
+      button {
+        @apply rounded-[var(--radius)] font-medium;
+      }
+    }
+  </style>
+</head>
+<body class="flex justify-center py-8">
+
+  <div class="w-3/5 space-y-6">
+
+    <!-- Header -->
+    <h1 class="text-3xl font-bold">🎤 LiveKit Kazakh STT</h1>
+
+    <!-- Controls Row -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+      <div class="md:col-span-2">
+        <label class="block text-sm mb-1">Room Name</label>
+        <input id="roomInput" type="text" placeholder="Enter room name"
+               class="focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] w-full"/>
+      </div>
+      <button id="perm"
+              class="p-2 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:opacity-90">
+        Enable Mic & List Devices
+      </button>
+      <button id="join"
+              class="p-2 bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] hover:opacity-90">
+        Join & Start
+      </button>
+    </div>
+
+    <!-- Mic Picker -->
+    <div id="picker" class="grid grid-cols-1 md:grid-cols-3 gap-4 hidden">
+      <div class="md:col-span-2">
+        <label class="block text-sm mb-1">Microphone</label>
+        <select id="micSelect"
+                class="focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] w-full"></select>
+      </div>
+      <div><!-- spacer --></div>
+    </div>
+
+    <!-- Status & VAD -->
+    <div class="flex items-center gap-4">
+      <div id="status"
+           class="px-4 py-2 bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] rounded">
+        🔄 idle
+      </div>
+      <div class="flex items-center space-x-2">
+        <div id="vad-indicator" class="w-3 h-3 rounded-full bg-[hsl(var(--border))]"></div>
+        <span>Voice Activity</span>
+      </div>
+      <button id="muteBtn"
+              class="px-4 py-2 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] hidden">
+        Mute
+      </button>
+      <button id="unmuteBtn"
+              class="px-4 py-2 bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] hidden">
+        Unmute
+      </button>
+    </div>
+
+    <!-- Single Latest Transcript -->
+    <section class="bg-[hsl(var(--muted))] p-4 rounded border border-[hsl(var(--border))]">
+      <h2 class="text-xl font-semibold mb-2">Transcript</h2>
+      <div id="transcript" class="flex justify-between items-center">
+        <span id="transcript-text" class="text-[hsl(var(--primary))]">—</span>
+        <time id="transcript-time" class="text-[hsl(var(--foreground))] text-xs">--:--:--</time>
+      </div>
+    </section>
+
+    <!-- Scrollable All-Finals Section -->
+    <section class="bg-[hsl(var(--muted))] p-4 rounded border border-[hsl(var(--border))]">
+      <h2 class="text-xl font-semibold mb-2">History</h2>
+      <ul id="all-transcripts" class="space-y-2 overflow-y-auto" style="max-height:200px;"></ul>
+    </section>
+
+  </div>
+
+  <script type="module">
+    import { connect, LocalAudioTrack }
+      from 'https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.esm.js';
+
+    const LIVEKIT_URL = "{{ livekit_url }}";
+    const roomInput   = document.getElementById("roomInput");
+    const permBtn     = document.getElementById("perm");
+    const pickerDiv   = document.getElementById("picker");
+    const micSelect   = document.getElementById("micSelect");
+    const joinBtn     = document.getElementById("join");
+    const statusEl    = document.getElementById("status");
+    const vadDot      = document.getElementById("vad-indicator");
+    const muteBtn     = document.getElementById("muteBtn");
+    const unmuteBtn   = document.getElementById("unmuteBtn");
+    const txtEl       = document.getElementById("transcript-text");
+    const timeEl      = document.getElementById("transcript-time");
+    const allList     = document.getElementById("all-transcripts");
+
+    let publishedTrack, analyser, dataArray;
+
+    function setStatus(txt) {
+      statusEl.textContent = txt;
+    }
+
+    function updateVAD() {
+      analyser.getByteTimeDomainData(dataArray);
+      let sum = 0;
+      dataArray.forEach(v => sum += (v-128)**2);
+      const rms = Math.sqrt(sum / dataArray.length);
+      vadDot.className = rms > 10
+        ? 'w-3 h-3 rounded-full bg-[hsl(var(--primary))]'
+        : 'w-3 h-3 rounded-full bg-[hsl(var(--border))]';
+      requestAnimationFrame(updateVAD);
+    }
+
+    permBtn.onclick = async () => {
+      setStatus('🔄 requesting mic permission…');
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio:true });
+        setStatus('🔄 listing microphones…');
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        micSelect.innerHTML = devices
+          .filter(d => d.kind==='audioinput')
+          .map(d => `<option value="${d.deviceId}">${d.label||d.deviceId}</option>`)
+          .join('');
+        setStatus('✅ select mic & press Join');
+        pickerDiv.classList.remove('hidden');
+      } catch(e) {
+        setStatus('❌ ' + e.message);
+      }
+    };
+
+    joinBtn.onclick = async () => {
+      const room = roomInput.value.trim();
+      if(!room) return alert('Enter room name');
+
+      setStatus('🔄 fetching token…');
+      const token = await fetch(`/token?room=${encodeURIComponent(room)}`)
+                         .then(r=>r.text());
+
+      setStatus('🔄 connecting…');
+      const lkRoom = await connect(LIVEKIT_URL, token);
+      setStatus(`✅ connected to ${lkRoom.name}`);
+
+      // VAD setup
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio:{ deviceId:{ exact:micSelect.value } }
+      });
+      const ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      setStatus('🔄 publishing mic…');
+      publishedTrack = new LocalAudioTrack(stream.getAudioTracks()[0]);
+      await lkRoom.localParticipant.publishTrack(publishedTrack);
+      setStatus('✅ microphone published');
+
+      muteBtn.classList.remove('hidden');
+      updateVAD();
+
+      muteBtn.onclick = () => {
+        publishedTrack.mute();
+        muteBtn.classList.add('hidden');
+        unmuteBtn.classList.remove('hidden');
+      };
+      unmuteBtn.onclick = () => {
+        publishedTrack.unmute();
+        unmuteBtn.classList.add('hidden');
+        muteBtn.classList.remove('hidden');
+      };
+
+      // Only final publish_data events arrive here
+      lkRoom.on('dataReceived', payload => {
+        const text = new TextDecoder().decode(payload).trim();
+        const now  = new Date().toLocaleTimeString();
+
+        // latest
+        txtEl.textContent  = text || '—';
+        timeEl.textContent = now;
+
+        // all finals
+        const li = document.createElement('li');
+        li.className = "flex justify-between bg-[hsl(var(--background))] p-2 rounded shadow";
+        li.innerHTML = `
+          <span class="text-[hsl(var(--primary))]">${text}</span>
+          <time class="text-[hsl(var(--foreground))] text-xs">${now}</time>
+        `;
+        allList.appendChild(li);
+        if(allList.children.length > 50) {
+          allList.removeChild(allList.firstChild);
+        }
+      });
+    };
+  </script>
+</body>
+</html>
