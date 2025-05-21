@@ -10,7 +10,9 @@ WORKDIR /app
 COPY web/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY web/app.py .
-COPY web/templates ./templates
+RUN mkdir -p web/templates
+COPY web/app.py       web/app.py
+COPY web/templates    web/templates
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "web.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+

@@ -1,4 +1,5 @@
-# docker-compose.yml
+version: "3.9"
+
 services:
   web:
     build:
@@ -20,6 +21,13 @@ services:
       - web
     environment:
       - HF_TOKEN=${HF_TOKEN}
+      - HF_MODEL=${HF_MODEL}
       - LIVEKIT_URL=${LIVEKIT_URL}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]

@@ -1,17 +1,18 @@
-FROM python:3.11-slim
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
-# Install ffmpeg for pydub on Debian-slim
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends \
+      python3-pip \
+      ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /agent
 
 COPY agent/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY agent/custom_agent.py .
 COPY agent/openai_agent.py .
 COPY agent/transcriber.py .
 
-CMD ["python", "-m", "agent.custom_agent", "dev"]
+CMD ["python3", "custom_agent.py", "dev"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LiveKit STT agent using the Hugging Face whisper-turbo-kazasr model (non-streaming),
+LiveKit STT agent using a configurable Hugging Face ASR model (non-streaming),
 with Silero VAD, enhanced noise cancellation (BVC), and StreamAdapter.
 """
 
@@ -17,6 +17,7 @@ try:
 except ImportError:
     from dotenv.main import load_dotenv
 
+import torch
 from transformers import pipeline
 from pydub import AudioSegment
 
@@ -52,7 +53,7 @@ logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 
 class HFAudioSTT(agents_stt.STT):
     """
-    Non‐streaming STT that sends complete utterances to a Hugging Face ASR model.
+    Non-streaming STT that sends complete utterances to a Hugging Face ASR model.
     """
     def __init__(self, model_name: str, hf_token: str = None):
         super().__init__(capabilities=STTCapabilities(streaming=False, interim_results=False))
@@ -60,6 +61,8 @@ class HFAudioSTT(agents_stt.STT):
             "automatic-speech-recognition",
             model=model_name,
             token=hf_token,
+            torch_dtype=torch.float16,
+            device="cuda" if torch.cuda.is_available() else "cpu",
             chunk_length_s=30,
         )
 
@@ -104,10 +107,12 @@ async def entrypoint(ctx: JobContext):
     # Load Silero VAD
     vad = silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.5)
 
-    # Instantiate our Hugging Face STT
+    # Read model name from env (fallback to whisper-turbo-kazasr)
+    hf_model = os.getenv("HF_MODEL", "erzhanbakanbayev/whisper-turbo-kazasr")
     hf_token = os.getenv("HF_TOKEN", None)
+
     hf_stt = HFAudioSTT(
-        model_name="erzhanbakanbayev/whisper-turbo-kazasr",
+        model_name=hf_model,
         hf_token=hf_token,
     )
 
